@@ -6,6 +6,7 @@ const WORLD_W = 1280;
 const WORLD_H = 720;
 const GROUND_Y = 584;
 const ATTACK_TIME = 0.42;
+const JUMP_SPEED = 750;
 
 type Fighter = {
   id: 1 | 2;
@@ -523,7 +524,7 @@ export default function Home() {
       }
 
       if (game.keys.has(jumpKey) && fighter.coyote > 0 && canMove) {
-        fighter.vy = -690;
+        fighter.vy = -JUMP_SPEED;
         fighter.onGround = false;
         fighter.coyote = 0;
         game.keys.delete(jumpKey);
