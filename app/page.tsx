@@ -8,6 +8,9 @@ const GROUND_Y = 584;
 const ATTACK_TIME = 0.42;
 const JUMP_SPEED = 750;
 const CAN_COOLDOWN = 1.8;
+const SNAPSHOT_INTERVAL_MS = 33;
+const REMOTE_EXTRAPOLATION_LIMIT = 0.085;
+const PREDICTION_DEAD_ZONE = 48;
 
 type Fighter = {
   id: 1 | 2;
@@ -131,6 +134,10 @@ type NetworkRuntime = {
   snapshotTick: number;
   lastSnapshotAt: number;
   targetSnapshot: GameSnapshot | null;
+  targetSnapshotTick: number;
+  appliedSnapshotTick: number;
+  targetSnapshotReceivedAt: number;
+  predictedLocalInput: PlayerInput;
   heartbeatId: ReturnType<typeof setInterval> | null;
 };
 
@@ -289,6 +296,10 @@ export default function Home() {
     snapshotTick: 0,
     lastSnapshotAt: 0,
     targetSnapshot: null,
+    targetSnapshotTick: 0,
+    appliedSnapshotTick: 0,
+    targetSnapshotReceivedAt: 0,
+    predictedLocalInput: { ...EMPTY_INPUT },
     heartbeatId: null,
   });
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -549,6 +560,7 @@ export default function Home() {
     };
 
     let nextCanId = 1;
+    let nextPredictedCanId = -1;
     const tryThrowCan = (fighter: Fighter, throwKey?: string) => {
       if (!throwKey || !game.keys.has(throwKey)) return;
       game.keys.delete(throwKey);
@@ -744,41 +756,148 @@ export default function Home() {
     };
 
     const applyTargetSnapshot = (dt: number) => {
-      const snapshot = networkRef.current.targetSnapshot;
+      const network = networkRef.current;
+      const snapshot = network.targetSnapshot;
       if (!snapshot) return;
-      const blend = 1 - Math.exp(-24 * dt);
+      const blend = 1 - Math.exp(-30 * dt);
+      const snapshotAge = Math.min(
+        REMOTE_EXTRAPOLATION_LIMIT,
+        Math.max(0, (performance.now() - network.targetSnapshotReceivedAt) / 1000),
+      );
+      const isNewSnapshot = network.appliedSnapshotTick !== network.targetSnapshotTick;
 
-      for (let index = 0; index < 2; index += 1) {
-        const fighter = game.fighters[index];
-        const next = snapshot.fighters[index];
-        fighter.x += (next.x - fighter.x) * blend;
-        fighter.y += (next.y - fighter.y) * blend;
-        fighter.vx = next.vx;
-        fighter.vy = next.vy;
-        fighter.facing = next.facing;
-        fighter.hp = next.hp;
-        fighter.attack = next.attack;
-        fighter.cooldown = next.cooldown;
-        fighter.throwCooldown = next.throwCooldown;
-        fighter.hitDone = next.hitDone;
-        fighter.hurt = next.hurt;
-        fighter.onGround = next.onGround;
-        fighter.coyote = next.coyote;
-        fighter.wins = next.wins;
+      const remoteFighter = game.fighters[0];
+      const remoteTarget = snapshot.fighters[0];
+      const remoteX = Math.max(
+        48,
+        Math.min(WORLD_W - 48, remoteTarget.x + remoteTarget.vx * snapshotAge),
+      );
+      const remoteY = remoteTarget.onGround
+        ? remoteTarget.y
+        : Math.min(
+            GROUND_Y,
+            remoteTarget.y +
+              remoteTarget.vy * snapshotAge +
+              0.5 * 1770 * snapshotAge * snapshotAge,
+          );
+      remoteFighter.x += (remoteX - remoteFighter.x) * blend;
+      remoteFighter.y += (remoteY - remoteFighter.y) * blend;
+      remoteFighter.vx = remoteTarget.vx;
+      remoteFighter.vy = remoteTarget.vy;
+      remoteFighter.facing = remoteTarget.facing;
+      remoteFighter.hp = remoteTarget.hp;
+      remoteFighter.attack = remoteTarget.attack;
+      remoteFighter.cooldown = remoteTarget.cooldown;
+      remoteFighter.throwCooldown = remoteTarget.throwCooldown;
+      remoteFighter.hitDone = remoteTarget.hitDone;
+      remoteFighter.hurt = remoteTarget.hurt;
+      remoteFighter.onGround = remoteTarget.onGround;
+      remoteFighter.coyote = remoteTarget.coyote;
+      remoteFighter.wins = remoteTarget.wins;
+
+      const predictedFighter = game.fighters[1];
+      const authoritativeFighter = snapshot.fighters[1];
+      if (isNewSnapshot) {
+        const errorX = authoritativeFighter.x - predictedFighter.x;
+        const errorY = authoritativeFighter.y - predictedFighter.y;
+        const predictionError = Math.hypot(errorX, errorY);
+        const receivedHit = authoritativeFighter.hp !== predictedFighter.hp;
+        const roundChanged = game.state !== snapshot.state;
+
+        if (predictionError > 170 || roundChanged) {
+          predictedFighter.x = authoritativeFighter.x;
+          predictedFighter.y = authoritativeFighter.y;
+          predictedFighter.vx = authoritativeFighter.vx;
+          predictedFighter.vy = authoritativeFighter.vy;
+          predictedFighter.onGround = authoritativeFighter.onGround;
+          predictedFighter.coyote = authoritativeFighter.coyote;
+        } else if (receivedHit) {
+          predictedFighter.x += errorX * 0.65;
+          predictedFighter.y += errorY * 0.65;
+          predictedFighter.vx = authoritativeFighter.vx;
+          predictedFighter.vy = authoritativeFighter.vy;
+          predictedFighter.onGround = authoritativeFighter.onGround;
+          predictedFighter.coyote = authoritativeFighter.coyote;
+        } else {
+          const movingLocally =
+            network.localInput.left || network.localInput.right;
+          const correction = movingLocally
+            ? predictionError > PREDICTION_DEAD_ZONE
+              ? 0.14
+              : 0
+            : 0.18;
+          predictedFighter.x += errorX * correction;
+          if (
+            Math.abs(errorY) > PREDICTION_DEAD_ZONE ||
+            (predictedFighter.onGround && authoritativeFighter.onGround)
+          ) {
+            predictedFighter.y += errorY * Math.max(correction, 0.18);
+          }
+          if (!movingLocally && predictedFighter.onGround) {
+            predictedFighter.vx +=
+              (authoritativeFighter.vx - predictedFighter.vx) * 0.22;
+          }
+        }
+
+        if (!network.localInput.left && !network.localInput.right) {
+          predictedFighter.facing = authoritativeFighter.facing;
+        }
+        predictedFighter.hp = authoritativeFighter.hp;
+        predictedFighter.attack = roundChanged
+          ? authoritativeFighter.attack
+          : Math.max(predictedFighter.attack, authoritativeFighter.attack);
+        predictedFighter.cooldown = roundChanged
+          ? authoritativeFighter.cooldown
+          : Math.max(predictedFighter.cooldown, authoritativeFighter.cooldown);
+        predictedFighter.throwCooldown = roundChanged
+          ? authoritativeFighter.throwCooldown
+          : Math.max(
+              predictedFighter.throwCooldown,
+              authoritativeFighter.throwCooldown,
+            );
+        predictedFighter.hitDone = authoritativeFighter.hitDone;
+        predictedFighter.hurt = authoritativeFighter.hurt;
+        predictedFighter.wins = authoritativeFighter.wins;
+        network.appliedSnapshotTick = network.targetSnapshotTick;
       }
 
       const currentCans = new Map(game.cans.map((can) => [can.id, can]));
-      game.cans = snapshot.cans.map((next) => {
+      const predictedCans = game.cans.filter((can) => can.id < 0);
+      if (isNewSnapshot) {
+        for (const confirmedCan of snapshot.cans) {
+          if (confirmedCan.owner !== 2 || currentCans.has(confirmedCan.id)) continue;
+          let closestIndex = -1;
+          let closestDistance = Number.POSITIVE_INFINITY;
+          for (let index = 0; index < predictedCans.length; index += 1) {
+            const predictedCan = predictedCans[index];
+            const distance = Math.hypot(
+              predictedCan.x - confirmedCan.x,
+              predictedCan.y - confirmedCan.y,
+            );
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closestIndex = index;
+            }
+          }
+          if (closestIndex >= 0) predictedCans.splice(closestIndex, 1);
+        }
+      }
+      const authoritativeCans = snapshot.cans.map((next) => {
         const current = currentCans.get(next.id);
-        if (!current) return { ...next };
+        const targetX = next.x + next.vx * snapshotAge;
+        const targetY =
+          next.y + next.vy * snapshotAge + 0.5 * 920 * snapshotAge * snapshotAge;
+        if (!current) return { ...next, x: targetX, y: targetY };
         return {
           ...next,
-          x: current.x + (next.x - current.x) * blend,
-          y: current.y + (next.y - current.y) * blend,
+          x: current.x + (targetX - current.x) * blend,
+          y: current.y + (targetY - current.y) * blend,
           rotation:
-            current.rotation + (next.rotation - current.rotation) * blend,
+            current.rotation +
+            (next.rotation + next.spin * snapshotAge - current.rotation) * blend,
         };
       });
+      game.cans = [...authoritativeCans, ...predictedCans];
 
       game.state = snapshot.state;
       game.round = snapshot.round;
@@ -790,6 +909,142 @@ export default function Home() {
         game.paused = snapshot.paused;
         setPaused(snapshot.paused);
       }
+    };
+
+    const predictGuestFighter = (dt: number) => {
+      const network = networkRef.current;
+      const input = network.localInput;
+      const previousInput = network.predictedLocalInput;
+      const fighter = game.fighters[1];
+
+      if (game.paused || game.state !== "playing") {
+        network.predictedLocalInput = { ...input };
+        return;
+      }
+
+      fighter.cooldown = Math.max(0, fighter.cooldown - dt);
+      fighter.throwCooldown = Math.max(0, fighter.throwCooldown - dt);
+      fighter.hurt = Math.max(0, fighter.hurt - dt);
+      fighter.attack = Math.max(0, fighter.attack - dt);
+      fighter.coyote = fighter.onGround
+        ? 0.11
+        : Math.max(0, fighter.coyote - dt);
+
+      const canMove = fighter.hurt <= 0 && game.introTime < 0.8;
+      const direction = canMove ? Number(input.right) - Number(input.left) : 0;
+      const acceleration = fighter.onGround ? 2500 : 1450;
+      const maxSpeed = 335;
+
+      if (direction !== 0) {
+        fighter.vx += direction * acceleration * dt;
+        fighter.vx = Math.max(-maxSpeed, Math.min(maxSpeed, fighter.vx));
+        if (fighter.attack <= 0) fighter.facing = direction > 0 ? 1 : -1;
+      } else if (fighter.onGround) {
+        const drag = 2400 * dt;
+        fighter.vx =
+          Math.abs(fighter.vx) <= drag
+            ? 0
+            : fighter.vx - Math.sign(fighter.vx) * drag;
+      }
+
+      if (input.jump && !previousInput.jump && fighter.coyote > 0 && canMove) {
+        fighter.vy = -JUMP_SPEED;
+        fighter.onGround = false;
+        fighter.coyote = 0;
+        sound(145, 0.08, "triangle", 0.025);
+      }
+
+      if (
+        input.attack &&
+        !previousInput.attack &&
+        fighter.cooldown <= 0 &&
+        fighter.hurt <= 0 &&
+        game.introTime < 0.8
+      ) {
+        fighter.attack = ATTACK_TIME;
+        fighter.cooldown = 0.58;
+        fighter.hitDone = false;
+        sound(215, 0.1, "sawtooth", 0.026);
+      }
+
+      if (
+        input.throwCan &&
+        !previousInput.throwCan &&
+        fighter.throwCooldown <= 0 &&
+        fighter.hurt <= 0 &&
+        game.introTime < 0.8
+      ) {
+        fighter.throwCooldown = CAN_COOLDOWN;
+        game.cans.push({
+          id: nextPredictedCanId,
+          owner: 2,
+          x: fighter.x + fighter.facing * 46,
+          y: fighter.y - 88,
+          vx: fighter.facing * 610 + fighter.vx * 0.22,
+          vy: -285,
+          rotation: 0,
+          spin: fighter.facing * 12,
+          life: 2.2,
+        });
+        nextPredictedCanId -= 1;
+        sound(330, 0.11, "triangle", 0.025);
+      }
+
+      const previousY = fighter.y;
+      fighter.vy += 1770 * dt;
+      fighter.x += fighter.vx * dt;
+      fighter.y += fighter.vy * dt;
+      fighter.x = Math.max(48, Math.min(WORLD_W - 48, fighter.x));
+      fighter.onGround = false;
+
+      if (fighter.y >= GROUND_Y) {
+        fighter.y = GROUND_Y;
+        fighter.vy = 0;
+        fighter.onGround = true;
+      } else if (fighter.vy >= 0) {
+        for (const platform of platforms) {
+          const crossedTop = previousY <= platform.y && fighter.y >= platform.y;
+          const abovePlatform =
+            fighter.x > platform.x - 28 && fighter.x < platform.x + platform.w + 28;
+          if (crossedTop && abovePlatform) {
+            fighter.y = platform.y;
+            fighter.vy = 0;
+            fighter.onGround = true;
+            break;
+          }
+        }
+      }
+
+      network.predictedLocalInput = { ...input };
+    };
+
+    const updatePredictedCans = (dt: number) => {
+      if (game.paused) return;
+      game.cans = game.cans.filter((can) => {
+        if (can.id >= 0) return true;
+        const previousY = can.y;
+        can.life -= dt;
+        can.vy += 920 * dt;
+        can.x += can.vx * dt;
+        can.y += can.vy * dt;
+        can.rotation += can.spin * dt;
+        const hitPlatform =
+          can.vy >= 0 &&
+          platforms.some(
+            (platform) =>
+              previousY <= platform.y &&
+              can.y >= platform.y &&
+              can.x >= platform.x &&
+              can.x <= platform.x + platform.w,
+          );
+        return (
+          can.life > 0 &&
+          can.x > -60 &&
+          can.x < WORLD_W + 60 &&
+          can.y < GROUND_Y &&
+          !hitPlatform
+        );
+      });
     };
 
     const createSnapshot = (): GameSnapshot => ({
@@ -824,6 +1079,8 @@ export default function Home() {
       const network = networkRef.current;
       if (network.role === "guest" && network.ready) {
         applyTargetSnapshot(dt);
+        predictGuestFighter(dt);
+        updatePredictedCans(dt);
         return;
       }
       if (network.role === "host" && network.ready) {
@@ -1484,7 +1741,7 @@ export default function Home() {
         network.role === "host" &&
         network.ready &&
         network.socket?.readyState === WebSocket.OPEN &&
-        time - network.lastSnapshotAt >= 50
+        time - network.lastSnapshotAt >= SNAPSHOT_INTERVAL_MS
       ) {
         network.lastSnapshotAt = time;
         network.snapshotTick += 1;
@@ -1567,6 +1824,10 @@ export default function Home() {
     network.remoteInput = { ...EMPTY_INPUT };
     network.appliedRemoteInput = { ...EMPTY_INPUT };
     network.targetSnapshot = null;
+    network.targetSnapshotTick = 0;
+    network.appliedSnapshotTick = 0;
+    network.targetSnapshotReceivedAt = 0;
+    network.predictedLocalInput = { ...EMPTY_INPUT };
     gameRef.current?.keys.clear();
   };
 
@@ -1604,6 +1865,10 @@ export default function Home() {
     network.snapshotTick = 0;
     network.lastSnapshotAt = 0;
     network.targetSnapshot = null;
+    network.targetSnapshotTick = 0;
+    network.appliedSnapshotTick = 0;
+    network.targetSnapshotReceivedAt = 0;
+    network.predictedLocalInput = { ...EMPTY_INPUT };
 
     setRoomCode(code);
     setNetworkRole(role);
@@ -1641,6 +1906,7 @@ export default function Home() {
         network.localInput = { ...EMPTY_INPUT };
         network.remoteInput = { ...EMPTY_INPUT };
         network.appliedRemoteInput = { ...EMPTY_INPUT };
+        network.predictedLocalInput = { ...EMPTY_INPUT };
         gameRef.current?.keys.clear();
         actionsRef.current?.resetMatch();
         setPaused(false);
@@ -1665,9 +1931,13 @@ export default function Home() {
       if (
         message.type === "snapshot" &&
         role === "guest" &&
+        Number.isSafeInteger(message.tick) &&
+        Number(message.tick) > network.targetSnapshotTick &&
         isGameSnapshot(message.game)
       ) {
         network.targetSnapshot = message.game;
+        network.targetSnapshotTick = Number(message.tick);
+        network.targetSnapshotReceivedAt = performance.now();
         return;
       }
 

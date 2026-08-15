@@ -33,6 +33,8 @@ GitHub Actions automatycznie buduje statyczną wersję gry i publikuje ją w Git
 
 Serwer pokojów znajduje się w katalogu `multiplayer/`. Każdy kod pokoju trafia do osobnego Cloudflare Durable Object, który przekazuje sterowanie gościa do gospodarza i stan walki z gospodarza do gościa przez WebSocket.
 
+Gospodarz pozostaje źródłem prawdy dla walki. Gość przewiduje lokalnie ruch i rozpoczęcie własnych akcji, a następnie łagodnie uzgadnia pozycję ze snapshotami hosta. Zdalne postacie i puszki są krótkotrwale ekstrapolowane między snapshotami wysyłanymi około 30 razy na sekundę.
+
 ```bash
 # lokalny Worker
 npm run multiplayer:dev
