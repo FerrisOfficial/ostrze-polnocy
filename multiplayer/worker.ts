@@ -282,7 +282,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/") {
         return json(
           {
-            service: "Ostrze Północy multiplayer",
+            service: "Bitwa pod Mostem multiplayer",
             status: "ok",
             transport: "websocket",
           },

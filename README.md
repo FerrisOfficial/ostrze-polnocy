@@ -1,12 +1,12 @@
-# Ostrze Północy
+# Bitwa pod Mostem
 
-Dynamiczna gra 2D z siekierami: lokalnie przy jednej klawiaturze albo online ze znajomym przez kod pokoju.
+Dynamiczna gra 2D o dwóch bezdomnych walczących siekierkami pod miejskim wiaduktem — lokalnie przy jednej klawiaturze albo online ze znajomym przez kod pokoju.
 
 ## Zagraj
 
 [Uruchom grę na GitHub Pages](https://ferrisofficial.github.io/ostrze-polnocy/)
 
-Wybierz **Gra online**. Jedna osoba tworzy pokój i wysyła kod złożony z sześciu znaków, a druga wpisuje go w formularzu dołączania. Gospodarz steruje Runą, a gość Bjørnem.
+Wybierz **Gra online**. Jedna osoba tworzy pokój i wysyła kod złożony z sześciu znaków, a druga wpisuje go w formularzu dołączania. Gospodarz steruje Mirkiem, a gość Staszkiem.
 
 ## Sterowanie
 

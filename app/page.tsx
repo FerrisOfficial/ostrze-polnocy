@@ -195,7 +195,7 @@ function makeFighter(id: 1 | 2, wins = 0): Fighter {
   const isFirst = id === 1;
   return {
     id,
-    name: isFirst ? "RUNA" : "BJØRN",
+    name: isFirst ? "MIREK" : "STASZEK",
     x: isFirst ? 310 : 970,
     y: GROUND_Y,
     vx: 0,
@@ -209,9 +209,9 @@ function makeFighter(id: 1 | 2, wins = 0): Fighter {
     onGround: true,
     coyote: 0.1,
     wins,
-    color: isFirst ? "#f04f3d" : "#35a7a0",
-    dark: isFirst ? "#6e201d" : "#145c5d",
-    accent: isFirst ? "#ffc36c" : "#a8eee3",
+    color: isFirst ? "#b85c3d" : "#527787",
+    dark: isFirst ? "#563326" : "#2b4148",
+    accent: isFirst ? "#e2a65d" : "#9fc0bf",
   };
 }
 
@@ -720,55 +720,103 @@ export default function Home() {
 
     const drawBackground = (time: number) => {
       const sky = ctx.createLinearGradient(0, 0, 0, WORLD_H);
-      sky.addColorStop(0, "#171320");
-      sky.addColorStop(0.56, "#41303a");
-      sky.addColorStop(1, "#c16b43");
+      sky.addColorStop(0, "#111923");
+      sky.addColorStop(0.58, "#26323a");
+      sky.addColorStop(1, "#57463b");
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, WORLD_W, WORLD_H);
 
-      ctx.fillStyle = "rgba(255, 205, 119, 0.11)";
+      ctx.fillStyle = "rgba(237, 216, 169, 0.1)";
       ctx.beginPath();
-      ctx.arc(1020, 118, 84, 0, Math.PI * 2);
+      ctx.arc(1030, 154, 68, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#f6c06c";
+      ctx.fillStyle = "#d9d0b6";
       ctx.beginPath();
-      ctx.arc(1020, 118, 54, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = "#2b2530";
-      ctx.beginPath();
-      ctx.moveTo(0, 402);
-      ctx.lineTo(148, 224);
-      ctx.lineTo(260, 350);
-      ctx.lineTo(394, 173);
-      ctx.lineTo(562, 382);
-      ctx.lineTo(735, 205);
-      ctx.lineTo(920, 387);
-      ctx.lineTo(1090, 235);
-      ctx.lineTo(1280, 398);
-      ctx.lineTo(1280, 620);
-      ctx.lineTo(0, 620);
-      ctx.closePath();
+      ctx.arc(1030, 154, 43, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = "#19191f";
-      ctx.beginPath();
-      ctx.moveTo(0, 470);
-      ctx.lineTo(205, 340);
-      ctx.lineTo(392, 478);
-      ctx.lineTo(614, 338);
-      ctx.lineTo(812, 480);
-      ctx.lineTo(1015, 350);
-      ctx.lineTo(1280, 472);
-      ctx.lineTo(1280, 620);
-      ctx.lineTo(0, 620);
-      ctx.closePath();
-      ctx.fill();
+      const buildings = [
+        { x: 0, y: 265, w: 165, h: 285 },
+        { x: 145, y: 320, w: 122, h: 230 },
+        { x: 250, y: 238, w: 190, h: 312 },
+        { x: 425, y: 350, w: 116, h: 200 },
+        { x: 525, y: 285, w: 176, h: 265 },
+        { x: 686, y: 330, w: 132, h: 220 },
+        { x: 804, y: 250, w: 205, h: 300 },
+        { x: 990, y: 315, w: 138, h: 235 },
+        { x: 1114, y: 270, w: 166, h: 280 },
+      ];
+      for (let index = 0; index < buildings.length; index += 1) {
+        const building = buildings[index];
+        ctx.fillStyle = index % 2 === 0 ? "#192127" : "#1e282e";
+        ctx.fillRect(building.x, building.y, building.w, building.h);
+        for (let wx = building.x + 18; wx < building.x + building.w - 10; wx += 31) {
+          for (let wy = building.y + 25; wy < building.y + building.h - 20; wy += 34) {
+            const lit = (Math.floor(wx / 30) + Math.floor(wy / 30) + index) % 4 === 0;
+            ctx.fillStyle = lit ? "rgba(238, 178, 96, 0.34)" : "rgba(7, 13, 17, 0.5)";
+            ctx.fillRect(wx, wy, 10, 15);
+          }
+        }
+      }
 
-      for (let i = 0; i < 14; i += 1) {
-        const x = ((i * 173 + 41) % WORLD_W) + Math.sin(time * 0.0003 + i) * 7;
-        const y = 185 + ((i * 79) % 270);
-        ctx.fillStyle = `rgba(255, 203, 125, ${0.08 + (i % 3) * 0.035})`;
+      ctx.fillStyle = "#2c3031";
+      ctx.fillRect(0, 0, WORLD_W, 104);
+      ctx.fillStyle = "#191d1f";
+      ctx.fillRect(0, 104, WORLD_W, 31);
+      ctx.fillStyle = "#3c4142";
+      for (let x = -40; x < WORLD_W; x += 188) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + 115, 135);
+        ctx.lineTo(x + 152, 135);
+        ctx.lineTo(x + 36, 0);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.fillStyle = "#353839";
+      ctx.fillRect(70, 105, 102, 455);
+      ctx.fillRect(1108, 105, 102, 455);
+      ctx.fillStyle = "#222627";
+      ctx.fillRect(84, 105, 20, 455);
+      ctx.fillRect(1176, 105, 20, 455);
+
+      for (const lampX of [232, 640, 1048]) {
+        const glow = ctx.createRadialGradient(lampX, 137, 4, lampX, 137, 175);
+        glow.addColorStop(0, "rgba(244, 183, 96, 0.27)");
+        glow.addColorStop(1, "rgba(244, 183, 96, 0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(lampX - 175, 112, 350, 350);
+        ctx.fillStyle = "#f0b35e";
+        ctx.fillRect(lampX - 19, 126, 38, 9);
+      }
+
+      ctx.save();
+      ctx.translate(640, 240);
+      ctx.rotate(-0.035);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(188, 74, 58, 0.55)";
+      ctx.font = "900 57px Arial Black, Arial";
+      ctx.fillText("NIE MA LEKKO", 0, 0);
+      ctx.restore();
+
+      ctx.strokeStyle = "rgba(146, 157, 155, 0.18)";
+      ctx.lineWidth = 2;
+      for (let x = 180; x < 1100; x += 30) {
+        ctx.beginPath();
+        ctx.moveTo(x, 360);
+        ctx.lineTo(x + 88, 540);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + 88, 360);
+        ctx.lineTo(x, 540);
+        ctx.stroke();
+      }
+
+      for (let i = 0; i < 10; i += 1) {
+        const x = ((i * 179 + 53) % WORLD_W) + Math.sin(time * 0.0005 + i) * 5;
+        const y = 190 + ((i * 71) % 290);
+        ctx.fillStyle = `rgba(245, 194, 118, ${0.08 + (i % 3) * 0.035})`;
         ctx.beginPath();
         ctx.arc(x, y, 1.5 + (i % 2), 0, Math.PI * 2);
         ctx.fill();
@@ -776,13 +824,16 @@ export default function Home() {
     };
 
     const drawPlatform = (x: number, y: number, w: number, h: number) => {
-      ctx.fillStyle = "#17171b";
-      ctx.fillRect(x - 6, y + 5, w + 12, h + 18);
-      ctx.fillStyle = "#685444";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+      ctx.fillRect(x - 7, y + 7, w + 14, h + 21);
+      ctx.fillStyle = "#66513b";
       ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = "#b58657";
+      ctx.fillStyle = "#a27b4e";
       ctx.fillRect(x, y, w, 5);
-      ctx.strokeStyle = "rgba(27, 21, 21, 0.5)";
+      ctx.fillStyle = "#443528";
+      ctx.fillRect(x + 12, y + h, 28, 13);
+      ctx.fillRect(x + w - 40, y + h, 28, 13);
+      ctx.strokeStyle = "rgba(25, 19, 16, 0.66)";
       ctx.lineWidth = 3;
       for (let i = x + 34; i < x + w; i += 52) {
         ctx.beginPath();
@@ -797,26 +848,73 @@ export default function Home() {
         drawPlatform(platform.x, platform.y, platform.w, platform.h);
       }
 
-      ctx.fillStyle = "#111318";
+      ctx.fillStyle = "#15191a";
       ctx.fillRect(0, GROUND_Y, WORLD_W, WORLD_H - GROUND_Y);
-      ctx.fillStyle = "#77583e";
+      ctx.fillStyle = "#444748";
       ctx.fillRect(0, GROUND_Y, WORLD_W, 20);
-      ctx.fillStyle = "#c18a4d";
+      ctx.fillStyle = "#777b78";
       ctx.fillRect(0, GROUND_Y, WORLD_W, 5);
 
-      ctx.strokeStyle = "#32251f";
-      ctx.lineWidth = 5;
-      for (let x = -20; x < WORLD_W; x += 72) {
+      ctx.strokeStyle = "#282c2d";
+      ctx.lineWidth = 3;
+      for (let x = -20; x < WORLD_W; x += 86) {
         ctx.beginPath();
         ctx.moveTo(x, GROUND_Y + 4);
-        ctx.lineTo(x + 38, GROUND_Y + 20);
+        ctx.lineTo(x + 46, GROUND_Y + 18);
         ctx.stroke();
       }
 
-      ctx.fillStyle = "rgba(246, 190, 103, 0.16)";
-      for (let i = 0; i < 7; i += 1) {
-        ctx.fillRect(80 + i * 188, 650 + (i % 2) * 13, 78, 3);
+      const puddle = ctx.createLinearGradient(0, 625, 0, 680);
+      puddle.addColorStop(0, "rgba(96, 130, 137, 0.22)");
+      puddle.addColorStop(1, "rgba(28, 38, 42, 0.03)");
+      ctx.fillStyle = puddle;
+      ctx.beginPath();
+      ctx.ellipse(660, 651, 235, 25, -0.025, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#242727";
+      ctx.beginPath();
+      ctx.arc(54, 602, 28, Math.PI, 0);
+      ctx.lineTo(88, 631);
+      ctx.lineTo(20, 631);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#303435";
+      ctx.beginPath();
+      ctx.arc(1195, 606, 35, Math.PI, 0);
+      ctx.lineTo(1237, 644);
+      ctx.lineTo(1153, 644);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(1052, 547);
+      ctx.strokeStyle = "#727775";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(-42, -47, 82, 53);
+      ctx.beginPath();
+      ctx.moveTo(-43, -48);
+      ctx.lineTo(-58, -78);
+      ctx.lineTo(-79, -78);
+      ctx.stroke();
+      ctx.fillStyle = "#171a1b";
+      for (const wheelX of [-30, 29]) {
+        ctx.beginPath();
+        ctx.arc(wheelX, 14, 10, 0, Math.PI * 2);
+        ctx.fill();
       }
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(180, 620);
+      ctx.rotate(0.045);
+      ctx.fillStyle = "#927451";
+      ctx.fillRect(-58, -35, 116, 70);
+      ctx.fillStyle = "rgba(49, 39, 30, 0.65)";
+      ctx.textAlign = "center";
+      ctx.font = "900 13px Arial";
+      ctx.fillText("TU ŚPIĘ", 0, 3);
+      ctx.restore();
     };
 
     const drawAxe = (fighter: Fighter) => {
@@ -829,33 +927,41 @@ export default function Home() {
       ctx.save();
       ctx.translate(18, -72);
       ctx.rotate(angle);
-      ctx.strokeStyle = "#6d492f";
+      ctx.strokeStyle = "#4d3425";
       ctx.lineWidth = 9;
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.lineTo(91, 0);
+      ctx.lineTo(82, 0);
       ctx.stroke();
-      ctx.strokeStyle = "#b88452";
+      ctx.strokeStyle = "#8d6541";
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(4, -2);
-      ctx.lineTo(86, -2);
+      ctx.lineTo(78, -2);
       ctx.stroke();
 
-      ctx.translate(84, 0);
-      ctx.fillStyle = "#d6d2c6";
+      ctx.translate(76, 0);
+      ctx.fillStyle = "#9a8875";
       ctx.strokeStyle = "#24262b";
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(-7, -25);
-      ctx.quadraticCurveTo(22, -36, 38, -21);
-      ctx.lineTo(27, 0);
-      ctx.lineTo(38, 21);
-      ctx.quadraticCurveTo(20, 35, -7, 24);
-      ctx.lineTo(1, 0);
+      ctx.moveTo(-5, -22);
+      ctx.quadraticCurveTo(20, -31, 36, -17);
+      ctx.lineTo(25, -2);
+      ctx.lineTo(34, 12);
+      ctx.quadraticCurveTo(17, 25, -5, 18);
+      ctx.lineTo(2, -1);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(106, 48, 34, 0.72)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(7, -15);
+      ctx.lineTo(24, -20);
+      ctx.moveTo(12, 10);
+      ctx.lineTo(25, 7);
       ctx.stroke();
       ctx.restore();
     };
@@ -865,6 +971,7 @@ export default function Home() {
       const stride = moving ? Math.sin(time * 0.018) * 13 : 0;
       const bob = moving ? Math.abs(Math.sin(time * 0.018)) * 4 : 0;
       const defeated = fighter.hp <= 0;
+      const skin = fighter.id === 1 ? "#b98562" : "#c69570";
 
       ctx.save();
       ctx.globalAlpha = defeated ? 0.72 : 1;
@@ -880,49 +987,107 @@ export default function Home() {
         ctx.translate(-28, -28);
       }
 
-      ctx.strokeStyle = "#202027";
-      ctx.lineWidth = 15;
+      ctx.strokeStyle = fighter.id === 1 ? "#313033" : "#343b3c";
+      ctx.lineWidth = 17;
       ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(-15, -45);
+      ctx.moveTo(-17, -48);
       ctx.lineTo(-17 + stride, -4);
-      ctx.moveTo(16, -45);
+      ctx.moveTo(17, -48);
       ctx.lineTo(18 - stride, -4);
       ctx.stroke();
-      ctx.strokeStyle = fighter.dark;
-      ctx.lineWidth = 9;
+
+      ctx.fillStyle = "#17191a";
+      ctx.strokeStyle = "#17191a";
+      ctx.lineWidth = 11;
       ctx.beginPath();
       ctx.moveTo(-17 + stride, -4);
-      ctx.lineTo(-31 + stride, 0);
+      ctx.lineTo(-35 + stride, 1);
       ctx.moveTo(18 - stride, -4);
-      ctx.lineTo(33 - stride, 0);
+      ctx.lineTo(37 - stride, 1);
       ctx.stroke();
 
+      ctx.fillStyle = fighter.id === 1 ? "#514237" : "#39494d";
+      roundedRect(ctx, -48, -107, 42, 66, 12);
+      ctx.fill();
+      ctx.strokeStyle = "#1e2021";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.fillStyle = "rgba(215, 183, 124, 0.42)";
+      ctx.fillRect(-43, -88, 31, 18);
+
       ctx.fillStyle = fighter.dark;
-      roundedRect(ctx, -38, -104, 76, 70, 20);
+      roundedRect(ctx, -42, -112, 84, 75, 17);
       ctx.fill();
       ctx.strokeStyle = "#201b20";
       ctx.lineWidth = 5;
       ctx.stroke();
 
       ctx.fillStyle = fighter.color;
-      roundedRect(ctx, -31, -99, 62, 52, 15);
+      roundedRect(ctx, -35, -107, 70, 58, 13);
       ctx.fill();
-      ctx.fillStyle = fighter.accent;
-      ctx.fillRect(-34, -72, 68, 10);
 
-      ctx.strokeStyle = "#d59a6b";
-      ctx.lineWidth = 13;
+      ctx.fillStyle = fighter.dark;
       ctx.beginPath();
-      ctx.moveTo(-27, -89);
-      ctx.lineTo(-47, -63);
-      ctx.moveTo(27, -87);
-      ctx.lineTo(17, -70);
+      ctx.moveTo(-40, -57);
+      ctx.lineTo(-30, -33);
+      ctx.lineTo(-14, -42);
+      ctx.lineTo(0, -32);
+      ctx.lineTo(16, -43);
+      ctx.lineTo(31, -34);
+      ctx.lineTo(41, -58);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = fighter.color;
+      ctx.lineWidth = 18;
+      ctx.beginPath();
+      ctx.moveTo(-31, -94);
+      ctx.lineTo(-50, -64);
+      ctx.moveTo(31, -93);
+      ctx.lineTo(19, -67);
       ctx.stroke();
 
-      ctx.fillStyle = fighter.hurt > 0 ? "#fff1df" : "#d9a06f";
+      ctx.strokeStyle = skin;
+      ctx.lineWidth = 12;
       ctx.beginPath();
-      ctx.arc(0, -129, 29, 0, Math.PI * 2);
+      ctx.moveTo(-50, -64);
+      ctx.lineTo(-54, -58);
+      ctx.moveTo(19, -67);
+      ctx.lineTo(17, -63);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(230, 204, 145, 0.42)";
+      ctx.fillRect(fighter.id === 1 ? -29 : 9, -76, 20, 18);
+      ctx.strokeStyle = "rgba(38, 30, 26, 0.48)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(fighter.id === 1 ? -29 : 9, -76, 20, 18);
+
+      ctx.strokeStyle = "rgba(25, 25, 26, 0.55)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, -102);
+      ctx.lineTo(0, -47);
+      ctx.stroke();
+      for (let y = -91; y < -55; y += 13) {
+        ctx.fillStyle = "#262427";
+        ctx.beginPath();
+        ctx.arc(7, y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = fighter.accent;
+      ctx.beginPath();
+      ctx.moveTo(-31, -113);
+      ctx.lineTo(31, -113);
+      ctx.lineTo(22, -96);
+      ctx.lineTo(-25, -99);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = fighter.hurt > 0 ? "#fff1df" : skin;
+      ctx.beginPath();
+      ctx.arc(0, -137, 28, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "#201b20";
       ctx.lineWidth = 5;
@@ -930,33 +1095,39 @@ export default function Home() {
 
       ctx.fillStyle = fighter.dark;
       ctx.beginPath();
-      ctx.arc(0, -139, 31, Math.PI, Math.PI * 2);
-      ctx.lineTo(30, -125);
-      ctx.lineTo(-30, -125);
+      ctx.arc(0, -149, 30, Math.PI, Math.PI * 2);
+      ctx.lineTo(30, -142);
+      ctx.lineTo(-30, -142);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = fighter.accent;
-      ctx.fillRect(-34, -137, 68, 8);
+      roundedRect(ctx, -32, -148, 64, 12, 4);
+      ctx.fill();
 
       ctx.fillStyle = "#201b20";
       ctx.beginPath();
-      ctx.moveTo(-17, -120);
-      ctx.lineTo(-4, -113);
-      ctx.lineTo(-20, -111);
+      ctx.moveTo(-17, -135);
+      ctx.lineTo(-5, -132);
+      ctx.lineTo(-18, -127);
       ctx.closePath();
-      ctx.moveTo(17, -120);
-      ctx.lineTo(4, -113);
-      ctx.lineTo(20, -111);
+      ctx.moveTo(17, -135);
+      ctx.lineTo(5, -132);
+      ctx.lineTo(19, -127);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = fighter.dark;
+
+      ctx.strokeStyle = "rgba(45, 39, 37, 0.72)";
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(-17, -108);
-      ctx.quadraticCurveTo(0, -91, 17, -108);
-      ctx.lineTo(10, -87);
-      ctx.lineTo(-9, -87);
-      ctx.closePath();
-      ctx.fill();
+      ctx.moveTo(-16, -118);
+      ctx.quadraticCurveTo(0, -110, 17, -119);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(48, 42, 39, 0.7)";
+      for (const dot of [[-13, -123], [-6, -119], [4, -121], [13, -124]]) {
+        ctx.beginPath();
+        ctx.arc(dot[0], dot[1], 1.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       drawAxe(fighter);
       ctx.restore();
@@ -1221,8 +1392,8 @@ export default function Home() {
         setNetworkStatus("connected");
         setAnnouncement(
           role === "host"
-            ? "Przeciwnik dołączył. Sterujesz Runą."
-            : "Połączono. Sterujesz Bjørnem.",
+            ? "Przeciwnik dołączył. Sterujesz Mirkiem."
+            : "Połączono. Sterujesz Staszkiem.",
         );
         return;
       }
@@ -1341,10 +1512,10 @@ export default function Home() {
     <main className="game-shell">
       <header className="topbar">
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">ᚱ</span>
+          <span className="brand-mark" aria-hidden="true">B</span>
           <div>
-            <p className="eyebrow">POJEDYNEK 2D</p>
-            <h1>OSTRZE PÓŁNOCY</h1>
+            <p className="eyebrow">ULICZNY POJEDYNEK 2D</p>
+            <h1>BITWA POD MOSTEM</h1>
           </div>
         </div>
         <div className="top-actions">
@@ -1390,7 +1561,7 @@ export default function Home() {
           <div className="online-live-badge" role="status">
             <span className="online-dot" aria-hidden="true" />
             <strong>{roomCode}</strong>
-            <span>{networkRole === "host" ? "RUNA · GOSPODARZ" : "BJØRN · GOŚĆ"}</span>
+            <span>{networkRole === "host" ? "MIREK · GOSPODARZ" : "STASZEK · GOŚĆ"}</span>
             <button type="button" onClick={leaveOnline}>ROZŁĄCZ</button>
           </div>
         ) : networkStatus !== "offline" ? (
@@ -1510,7 +1681,7 @@ export default function Home() {
           width={WORLD_W}
           height={WORLD_H}
           className="game-canvas"
-          aria-label="Gra OSTRZE PÓŁNOCY. Gracz pierwszy: A, D, W i F. Gracz drugi: strzałki i L."
+          aria-label="Gra BITWA POD MOSTEM. Mirek: A, D, W i F. Staszek: strzałki i L."
         />
         <div className="pause-badge" aria-hidden="true">
           <span>P</span> PAUZA
@@ -1521,7 +1692,7 @@ export default function Home() {
         <article className="player-controls player-one">
           <div className="player-number">01</div>
           <div>
-            <p className="player-name">RUNA</p>
+            <p className="player-name">MIREK</p>
             <div className="keys-row">
               <kbd>A</kbd><kbd>D</kbd><span>RUCH</span>
               <kbd>W</kbd><span>SKOK</span>
@@ -1535,7 +1706,7 @@ export default function Home() {
         </div>
         <article className="player-controls player-two">
           <div>
-            <p className="player-name">BJØRN</p>
+            <p className="player-name">STASZEK</p>
             <div className="keys-row">
               <kbd>←</kbd><kbd>→</kbd><span>RUCH</span>
               <kbd>↑</kbd><span>SKOK</span>
