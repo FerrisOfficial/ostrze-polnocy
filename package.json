@@ -9,9 +9,12 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "build:pages": "next build",
+    "multiplayer:dev": "wrangler dev --config multiplayer/wrangler.jsonc",
+    "multiplayer:types": "wrangler types multiplayer/worker-configuration.d.ts --config multiplayer/wrangler.jsonc",
+    "multiplayer:deploy": "wrangler deploy --config multiplayer/wrangler.jsonc",
     "start": "vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern multiplayer/worker-configuration.d.ts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
@@ -42,7 +45,7 @@
     "typescript-eslint": "8.59.3",
     "vinext": "1.0.0-beta.2",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.123.0"
   },
   "type": "module"
 }

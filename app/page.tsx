@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const WORLD_W = 1280;
 const WORLD_H = 720;
@@ -54,6 +54,137 @@ type Game = {
   lastTime: number;
 };
 
+type NetworkRole = "host" | "guest";
+type NetworkStatus =
+  | "offline"
+  | "menu"
+  | "connecting"
+  | "waiting"
+  | "connected"
+  | "error";
+
+type PlayerInput = {
+  left: boolean;
+  right: boolean;
+  jump: boolean;
+  attack: boolean;
+};
+
+type FighterSnapshot = Pick<
+  Fighter,
+  | "id"
+  | "x"
+  | "y"
+  | "vx"
+  | "vy"
+  | "facing"
+  | "hp"
+  | "attack"
+  | "cooldown"
+  | "hitDone"
+  | "hurt"
+  | "onGround"
+  | "coyote"
+  | "wins"
+>;
+
+type GameSnapshot = {
+  fighters: [FighterSnapshot, FighterSnapshot];
+  state: RoundState;
+  round: number;
+  winner: 1 | 2 | null;
+  roundEndTime: number;
+  introTime: number;
+  shake: number;
+  paused: boolean;
+};
+
+type NetworkRuntime = {
+  socket: WebSocket | null;
+  role: NetworkRole | null;
+  roomCode: string;
+  ready: boolean;
+  manuallyClosed: boolean;
+  localInput: PlayerInput;
+  remoteInput: PlayerInput;
+  appliedRemoteInput: PlayerInput;
+  inputSequence: number;
+  snapshotTick: number;
+  lastSnapshotAt: number;
+  targetSnapshot: GameSnapshot | null;
+  heartbeatId: ReturnType<typeof setInterval> | null;
+};
+
+const MULTIPLAYER_ENDPOINT =
+  "wss://ostrze-polnocy-multiplayer.maciek-m-stempniak.workers.dev";
+const EMPTY_INPUT: PlayerInput = {
+  left: false,
+  right: false,
+  jump: false,
+  attack: false,
+};
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPlayerInput(value: unknown): value is PlayerInput {
+  return (
+    isObjectRecord(value) &&
+    typeof value.left === "boolean" &&
+    typeof value.right === "boolean" &&
+    typeof value.jump === "boolean" &&
+    typeof value.attack === "boolean"
+  );
+}
+
+function isSnapshotFighter(value: unknown): value is FighterSnapshot {
+  if (!isObjectRecord(value)) return false;
+  const numericFields = [
+    "x",
+    "y",
+    "vx",
+    "vy",
+    "hp",
+    "attack",
+    "cooldown",
+    "hurt",
+    "coyote",
+    "wins",
+  ];
+  return (
+    (value.id === 1 || value.id === 2) &&
+    numericFields.every(
+      (field) => typeof value[field] === "number" && Number.isFinite(value[field]),
+    ) &&
+    (value.facing === 1 || value.facing === -1) &&
+    typeof value.hitDone === "boolean" &&
+    typeof value.onGround === "boolean"
+  );
+}
+
+function isGameSnapshot(value: unknown): value is GameSnapshot {
+  if (!isObjectRecord(value) || !Array.isArray(value.fighters)) return false;
+  return (
+    value.fighters.length === 2 &&
+    value.fighters.every(isSnapshotFighter) &&
+    ["round", "roundEndTime", "introTime", "shake"].every(
+      (field) =>
+        typeof value[field] === "number" && Number.isFinite(value[field]),
+    ) &&
+    ["playing", "roundOver", "matchOver"].includes(String(value.state)) &&
+    (value.winner === 1 || value.winner === 2 || value.winner === null) &&
+    typeof value.paused === "boolean"
+  );
+}
+
+function makeRoomCode(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const random = new Uint8Array(6);
+  crypto.getRandomValues(random);
+  return Array.from(random, (value) => alphabet[value % alphabet.length]).join("");
+}
+
 const platforms = [
   { x: 104, y: 442, w: 280, h: 22 },
   { x: 896, y: 442, w: 280, h: 22 },
@@ -103,11 +234,65 @@ export default function Home() {
   const actionsRef = useRef<{ resetMatch: () => void } | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
   const soundEnabledRef = useRef(true);
+  const networkRef = useRef<NetworkRuntime>({
+    socket: null,
+    role: null,
+    roomCode: "",
+    ready: false,
+    manuallyClosed: false,
+    localInput: { ...EMPTY_INPUT },
+    remoteInput: { ...EMPTY_INPUT },
+    appliedRemoteInput: { ...EMPTY_INPUT },
+    inputSequence: 0,
+    snapshotTick: 0,
+    lastSnapshotAt: 0,
+    targetSnapshot: null,
+    heartbeatId: null,
+  });
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>("offline");
+  const [networkRole, setNetworkRole] = useState<NetworkRole | null>(null);
+  const [roomCode, setRoomCode] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [networkError, setNetworkError] = useState("");
   const [announcement, setAnnouncement] = useState(
     "Runda pierwsza. Walka rozpoczęta.",
   );
+
+  const sendGuestInput = useCallback((key: string, pressed: boolean): boolean => {
+    const network = networkRef.current;
+    if (network.role !== "guest" || !network.socket || !network.ready) {
+      return false;
+    }
+
+    const normalized = key.toLowerCase();
+    const field =
+      normalized === "a" || normalized === "arrowleft"
+        ? "left"
+        : normalized === "d" || normalized === "arrowright"
+          ? "right"
+          : normalized === "w" || normalized === "arrowup"
+            ? "jump"
+            : normalized === "f" || normalized === "l"
+              ? "attack"
+              : null;
+    if (!field) return false;
+    if (network.localInput[field] === pressed) return true;
+
+    network.localInput[field] = pressed;
+    network.inputSequence += 1;
+    if (network.socket.readyState === WebSocket.OPEN) {
+      network.socket.send(
+        JSON.stringify({
+          type: "input",
+          seq: network.inputSequence,
+          input: network.localInput,
+        }),
+      );
+    }
+    return true;
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -203,6 +388,7 @@ export default function Home() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      const network = networkRef.current;
       if (
         ["a", "d", "w", "f", "arrowleft", "arrowright", "arrowup", "l", " ", "enter", "p"].includes(
           key,
@@ -211,6 +397,19 @@ export default function Home() {
         event.preventDefault();
       }
       if (event.repeat && ["w", "arrowup", "f", "l", "p"].includes(key)) {
+        return;
+      }
+      if (network.role === "guest" && network.ready) {
+        if (sendGuestInput(key, true)) {
+          ensureAudio();
+        }
+        return;
+      }
+      if (
+        network.role === "host" &&
+        network.ready &&
+        ["arrowleft", "arrowright", "arrowup", "l"].includes(key)
+      ) {
         return;
       }
       if (key === "p") {
@@ -227,11 +426,30 @@ export default function Home() {
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      game.keys.delete(event.key.toLowerCase());
+      const key = event.key.toLowerCase();
+      const network = networkRef.current;
+      if (network.role === "guest" && network.ready) {
+        sendGuestInput(key, false);
+        return;
+      }
+      if (
+        network.role === "host" &&
+        network.ready &&
+        ["arrowleft", "arrowright", "arrowup", "l"].includes(key)
+      ) {
+        return;
+      }
+      game.keys.delete(key);
     };
 
     const handleBlur = () => {
       game.keys.clear();
+      const network = networkRef.current;
+      if (network.role === "guest" && network.ready) {
+        for (const key of ["a", "d", "w", "f"]) {
+          sendGuestInput(key, false);
+        }
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, { passive: false });
@@ -377,7 +595,93 @@ export default function Home() {
       }
     };
 
+    const applyRemoteInput = () => {
+      const network = networkRef.current;
+      const input = network.remoteInput;
+      const previous = network.appliedRemoteInput;
+
+      if (input.left) game.keys.add("arrowleft");
+      else game.keys.delete("arrowleft");
+      if (input.right) game.keys.add("arrowright");
+      else game.keys.delete("arrowright");
+      if (input.jump && !previous.jump) game.keys.add("arrowup");
+      if (!input.jump) game.keys.delete("arrowup");
+      if (input.attack && !previous.attack) game.keys.add("l");
+      if (!input.attack) game.keys.delete("l");
+
+      network.appliedRemoteInput = { ...input };
+    };
+
+    const applyTargetSnapshot = (dt: number) => {
+      const snapshot = networkRef.current.targetSnapshot;
+      if (!snapshot) return;
+      const blend = 1 - Math.exp(-24 * dt);
+
+      for (let index = 0; index < 2; index += 1) {
+        const fighter = game.fighters[index];
+        const next = snapshot.fighters[index];
+        fighter.x += (next.x - fighter.x) * blend;
+        fighter.y += (next.y - fighter.y) * blend;
+        fighter.vx = next.vx;
+        fighter.vy = next.vy;
+        fighter.facing = next.facing;
+        fighter.hp = next.hp;
+        fighter.attack = next.attack;
+        fighter.cooldown = next.cooldown;
+        fighter.hitDone = next.hitDone;
+        fighter.hurt = next.hurt;
+        fighter.onGround = next.onGround;
+        fighter.coyote = next.coyote;
+        fighter.wins = next.wins;
+      }
+
+      game.state = snapshot.state;
+      game.round = snapshot.round;
+      game.winner = snapshot.winner;
+      game.roundEndTime = snapshot.roundEndTime;
+      game.introTime = snapshot.introTime;
+      game.shake = snapshot.shake;
+      if (game.paused !== snapshot.paused) {
+        game.paused = snapshot.paused;
+        setPaused(snapshot.paused);
+      }
+    };
+
+    const createSnapshot = (): GameSnapshot => ({
+      fighters: game.fighters.map((fighter) => ({
+        id: fighter.id,
+        x: fighter.x,
+        y: fighter.y,
+        vx: fighter.vx,
+        vy: fighter.vy,
+        facing: fighter.facing,
+        hp: fighter.hp,
+        attack: fighter.attack,
+        cooldown: fighter.cooldown,
+        hitDone: fighter.hitDone,
+        hurt: fighter.hurt,
+        onGround: fighter.onGround,
+        coyote: fighter.coyote,
+        wins: fighter.wins,
+      })) as [FighterSnapshot, FighterSnapshot],
+      state: game.state,
+      round: game.round,
+      winner: game.winner,
+      roundEndTime: game.roundEndTime,
+      introTime: game.introTime,
+      shake: game.shake,
+      paused: game.paused,
+    });
+
     const update = (dt: number) => {
+      const network = networkRef.current;
+      if (network.role === "guest" && network.ready) {
+        applyTargetSnapshot(dt);
+        return;
+      }
+      if (network.role === "host" && network.ready) {
+        applyRemoteInput();
+      }
       if (game.paused) return;
       game.introTime = Math.max(0, game.introTime - dt);
 
@@ -783,6 +1087,23 @@ export default function Home() {
       const dt = Math.min(0.028, (time - game.lastTime) / 1000 || 0);
       game.lastTime = time;
       update(dt);
+      const network = networkRef.current;
+      if (
+        network.role === "host" &&
+        network.ready &&
+        network.socket?.readyState === WebSocket.OPEN &&
+        time - network.lastSnapshotAt >= 50
+      ) {
+        network.lastSnapshotAt = time;
+        network.snapshotTick += 1;
+        network.socket.send(
+          JSON.stringify({
+            type: "snapshot",
+            tick: network.snapshotTick,
+            game: createSnapshot(),
+          }),
+        );
+      }
       draw(time);
       animationFrame = requestAnimationFrame(loop);
     };
@@ -802,11 +1123,194 @@ export default function Home() {
       canvas.removeEventListener("pointerdown", handleCanvasPointer);
       actionsRef.current = null;
     };
-  }, []);
+  }, [sendGuestInput]);
+
+  const closeNetworkSocket = () => {
+    const network = networkRef.current;
+    network.manuallyClosed = true;
+    network.ready = false;
+    if (network.heartbeatId) clearInterval(network.heartbeatId);
+    network.heartbeatId = null;
+    if (network.socket && network.socket.readyState < WebSocket.CLOSING) {
+      network.socket.close(1000, "Player left the room");
+    }
+    network.socket = null;
+    network.role = null;
+    network.roomCode = "";
+    network.localInput = { ...EMPTY_INPUT };
+    network.remoteInput = { ...EMPTY_INPUT };
+    network.appliedRemoteInput = { ...EMPTY_INPUT };
+    network.targetSnapshot = null;
+    gameRef.current?.keys.clear();
+  };
+
+  const leaveOnline = () => {
+    closeNetworkSocket();
+    setNetworkStatus("offline");
+    setNetworkRole(null);
+    setRoomCode("");
+    setJoinCode("");
+    setNetworkError("");
+    setPaused(false);
+    actionsRef.current?.resetMatch();
+    setAnnouncement("Tryb lokalny. Nowy pojedynek.");
+  };
+
+  const connectOnline = (role: NetworkRole, requestedCode: string) => {
+    const code = requestedCode.trim().toUpperCase();
+    if (!/^[A-Z2-9]{6}$/.test(code)) {
+      setNetworkError("Kod musi mieć 6 znaków (bez 0, 1, I oraz O).");
+      setNetworkStatus("menu");
+      return;
+    }
+
+    closeNetworkSocket();
+    const socket = new WebSocket(
+      `${MULTIPLAYER_ENDPOINT}/room/${code}?mode=${role === "host" ? "create" : "join"}`,
+    );
+    const network = networkRef.current;
+    network.socket = socket;
+    network.role = role;
+    network.roomCode = code;
+    network.ready = false;
+    network.manuallyClosed = false;
+    network.inputSequence = 0;
+    network.snapshotTick = 0;
+    network.lastSnapshotAt = 0;
+    network.targetSnapshot = null;
+
+    setRoomCode(code);
+    setNetworkRole(role);
+    setNetworkError("");
+    setNetworkStatus("connecting");
+    setAnnouncement("Łączenie z pokojem online.");
+
+    socket.addEventListener("open", () => {
+      if (networkRef.current.socket !== socket) return;
+      network.heartbeatId = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25_000);
+      if (role === "host") {
+        setNetworkStatus("waiting");
+        setAnnouncement(`Pokój ${code} utworzony. Oczekiwanie na przeciwnika.`);
+      }
+    });
+
+    socket.addEventListener("message", (event) => {
+      if (networkRef.current.socket !== socket || typeof event.data !== "string") {
+        return;
+      }
+      let message: unknown;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (!isObjectRecord(message) || typeof message.type !== "string") return;
+
+      if (message.type === "ready") {
+        network.ready = true;
+        network.localInput = { ...EMPTY_INPUT };
+        network.remoteInput = { ...EMPTY_INPUT };
+        network.appliedRemoteInput = { ...EMPTY_INPUT };
+        gameRef.current?.keys.clear();
+        actionsRef.current?.resetMatch();
+        setPaused(false);
+        setNetworkStatus("connected");
+        setAnnouncement(
+          role === "host"
+            ? "Przeciwnik dołączył. Sterujesz Runą."
+            : "Połączono. Sterujesz Bjørnem.",
+        );
+        return;
+      }
+
+      if (
+        message.type === "input" &&
+        role === "host" &&
+        isPlayerInput(message.input)
+      ) {
+        network.remoteInput = { ...message.input };
+        return;
+      }
+
+      if (
+        message.type === "snapshot" &&
+        role === "guest" &&
+        isGameSnapshot(message.game)
+      ) {
+        network.targetSnapshot = message.game;
+        return;
+      }
+
+      if (message.type === "peer_left") {
+        network.ready = false;
+        network.remoteInput = { ...EMPTY_INPUT };
+        network.appliedRemoteInput = { ...EMPTY_INPUT };
+        gameRef.current?.keys.clear();
+        if (role === "host") {
+          setNetworkStatus("waiting");
+          setAnnouncement("Przeciwnik wyszedł. Możesz poczekać na kolejną osobę.");
+        } else {
+          network.manuallyClosed = true;
+          socket.close(1000, "Host left the room");
+          setNetworkError("Gospodarz opuścił pokój.");
+          setNetworkStatus("error");
+        }
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      if (networkRef.current.socket !== socket) return;
+      setNetworkError(
+        role === "guest"
+          ? "Nie udało się dołączyć. Sprawdź kod albo poproś gospodarza o nowy pokój."
+          : "Nie udało się utworzyć pokoju. Spróbuj ponownie.",
+      );
+      setNetworkStatus("error");
+    });
+
+    socket.addEventListener("close", () => {
+      if (network.heartbeatId) clearInterval(network.heartbeatId);
+      network.heartbeatId = null;
+      if (networkRef.current.socket !== socket || network.manuallyClosed) return;
+      network.ready = false;
+      setNetworkError("Połączenie z pokojem zostało przerwane.");
+      setNetworkStatus("error");
+    });
+  };
+
+  useEffect(
+    () => () => {
+      const network = networkRef.current;
+      network.manuallyClosed = true;
+      if (network.heartbeatId) clearInterval(network.heartbeatId);
+      if (network.socket && network.socket.readyState < WebSocket.CLOSING) {
+        network.socket.close(1000, "Page closed");
+      }
+    },
+    [],
+  );
 
   const setVirtualKey = (key: string, pressed: boolean) => {
     const game = gameRef.current;
     if (!game) return;
+    if (networkRef.current.role === "guest" && networkRef.current.ready) {
+      sendGuestInput(key, pressed);
+      if (pressed && audioRef.current?.state === "suspended") {
+        void audioRef.current.resume();
+      }
+      return;
+    }
+    if (
+      networkRef.current.role === "host" &&
+      networkRef.current.ready &&
+      ["arrowleft", "arrowright", "arrowup", "l"].includes(key)
+    ) {
+      return;
+    }
     if (pressed) {
       game.keys.add(key);
       if (audioRef.current?.state === "suspended") void audioRef.current.resume();
@@ -845,6 +1349,19 @@ export default function Home() {
         </div>
         <div className="top-actions">
           <button
+            className={`utility-button online-button ${networkStatus === "connected" ? "is-live" : ""}`}
+            type="button"
+            aria-pressed={networkStatus !== "offline"}
+            onClick={() => {
+              if (networkStatus === "offline") {
+                setNetworkError("");
+                setNetworkStatus("menu");
+              }
+            }}
+          >
+            {networkStatus === "connected" ? `ONLINE · ${roomCode}` : "GRA ONLINE"}
+          </button>
+          <button
             className="utility-button"
             type="button"
             aria-pressed={!soundEnabled}
@@ -859,6 +1376,7 @@ export default function Home() {
           <button
             className="utility-button reset-button"
             type="button"
+            disabled={networkStatus === "connected" && networkRole === "guest"}
             onClick={() => actionsRef.current?.resetMatch()}
           >
             NOWY POJEDYNEK
@@ -868,6 +1386,125 @@ export default function Home() {
 
       <section className="arena-wrap" aria-label="Arena walki dwóch graczy">
         <div className="arena-corners" aria-hidden="true" />
+        {networkStatus === "connected" ? (
+          <div className="online-live-badge" role="status">
+            <span className="online-dot" aria-hidden="true" />
+            <strong>{roomCode}</strong>
+            <span>{networkRole === "host" ? "RUNA · GOSPODARZ" : "BJØRN · GOŚĆ"}</span>
+            <button type="button" onClick={leaveOnline}>ROZŁĄCZ</button>
+          </div>
+        ) : networkStatus !== "offline" ? (
+          <div className="online-backdrop">
+            <section className="online-dialog" aria-labelledby="online-title">
+              <button
+                type="button"
+                className="online-close"
+                aria-label="Zamknij tryb online"
+                onClick={leaveOnline}
+              >
+                ×
+              </button>
+
+              {networkStatus === "menu" && (
+                <>
+                  <p className="online-kicker">PRAWDZIWY MULTIPLAYER</p>
+                  <h2 id="online-title">ZAGRAJ ZE ZNAJOMYM</h2>
+                  <p className="online-copy">
+                    Utwórz pokój i wyślij kod albo wpisz kod otrzymany od gospodarza.
+                  </p>
+                  <button
+                    type="button"
+                    className="online-primary"
+                    onClick={() => connectOnline("host", makeRoomCode())}
+                  >
+                    UTWÓRZ POKÓJ
+                  </button>
+                  <div className="online-divider"><span>ALBO</span></div>
+                  <form
+                    className="join-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      connectOnline("guest", joinCode);
+                    }}
+                  >
+                    <label htmlFor="room-code">KOD POKOJU</label>
+                    <div>
+                      <input
+                        id="room-code"
+                        value={joinCode}
+                        maxLength={6}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder="ABC234"
+                        onChange={(event) =>
+                          setJoinCode(
+                            event.target.value
+                              .toUpperCase()
+                              .replace(/[^A-HJ-NP-Z2-9]/g, ""),
+                          )
+                        }
+                      />
+                      <button type="submit">DOŁĄCZ</button>
+                    </div>
+                  </form>
+                  {networkError && <p className="online-error">{networkError}</p>}
+                </>
+              )}
+
+              {networkStatus === "connecting" && (
+                <>
+                  <div className="online-spinner" aria-hidden="true" />
+                  <p className="online-kicker">POKÓJ {roomCode}</p>
+                  <h2 id="online-title">ŁĄCZENIE…</h2>
+                  <p className="online-copy">Kontaktujemy się z areną Cloudflare.</p>
+                </>
+              )}
+
+              {networkStatus === "waiting" && (
+                <>
+                  <p className="online-kicker">POKÓJ GOTOWY</p>
+                  <h2 id="online-title">WYŚLIJ TEN KOD</h2>
+                  <button
+                    type="button"
+                    className="room-code-display"
+                    title="Kopiuj kod"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(roomCode)
+                        .then(() => setAnnouncement(`Skopiowano kod ${roomCode}.`))
+                        .catch(() => setAnnouncement(`Kod pokoju: ${roomCode}.`));
+                    }}
+                  >
+                    {roomCode}
+                  </button>
+                  <p className="online-copy waiting-copy">
+                    Czekamy, aż druga osoba wybierze „Gra online” i wpisze kod.
+                  </p>
+                  <div className="waiting-pulse" aria-hidden="true"><i /><i /><i /></div>
+                </>
+              )}
+
+              {networkStatus === "error" && (
+                <>
+                  <p className="online-kicker error-kicker">POŁĄCZENIE PRZERWANE</p>
+                  <h2 id="online-title">NIE UDAŁO SIĘ POŁĄCZYĆ</h2>
+                  <p className="online-error">{networkError}</p>
+                  <button
+                    type="button"
+                    className="online-primary"
+                    onClick={() => {
+                      closeNetworkSocket();
+                      setNetworkError("");
+                      setNetworkStatus("menu");
+                    }}
+                  >
+                    WRÓĆ
+                  </button>
+                </>
+              )}
+            </section>
+          </div>
+        ) : null}
         <canvas
           ref={canvasRef}
           width={WORLD_W}
@@ -909,7 +1546,10 @@ export default function Home() {
         </article>
       </section>
 
-      <section className="touch-controls" aria-label="Sterowanie dotykowe">
+      <section
+        className={`touch-controls ${networkStatus === "connected" ? `online-${networkRole}` : ""}`}
+        aria-label="Sterowanie dotykowe"
+      >
         <div className="touch-side touch-one">
           {touchButton("a", "←")}
           {touchButton("d", "→")}
