@@ -13,6 +13,7 @@ type PlayerInput = {
   right: boolean;
   jump: boolean;
   attack: boolean;
+  throwCan: boolean;
 };
 
 const ROOM_CODE = /^[A-Z2-9]{6}$/;
@@ -37,7 +38,7 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isPlayerInput(value: unknown): value is PlayerInput {
   if (!isRecord(value)) return false;
-  return ["left", "right", "jump", "attack"].every(
+  return ["left", "right", "jump", "attack", "throwCan"].every(
     (key) => typeof value[key] === "boolean",
   );
 }
@@ -54,6 +55,7 @@ function isFighterSnapshot(value: unknown): boolean {
       "hp",
       "attack",
       "cooldown",
+      "throwCooldown",
       "hurt",
       "coyote",
       "wins",
@@ -64,11 +66,28 @@ function isFighterSnapshot(value: unknown): boolean {
   );
 }
 
+function isCanSnapshot(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    Number.isSafeInteger(value.id) &&
+    (value.owner === 1 || value.owner === 2) &&
+    ["x", "y", "vx", "vy", "rotation", "spin", "life"].every((key) =>
+      isFiniteNumber(value[key]),
+    )
+  );
+}
+
 function isGameSnapshot(value: unknown): boolean {
-  if (!isRecord(value) || !Array.isArray(value.fighters)) return false;
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.fighters) ||
+    !Array.isArray(value.cans)
+  ) return false;
   return (
     value.fighters.length === 2 &&
     value.fighters.every(isFighterSnapshot) &&
+    value.cans.length <= 12 &&
+    value.cans.every(isCanSnapshot) &&
     ["round", "roundEndTime", "introTime", "shake"].every((key) =>
       isFiniteNumber(value[key]),
     ) &&

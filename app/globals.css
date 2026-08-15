@@ -563,6 +563,16 @@ kbd.attack-key {
   background: var(--gold);
 }
 
+kbd.wide-key {
+  min-width: 56px;
+}
+
+kbd.can-key {
+  color: #17141a;
+  border-color: #d9c49b;
+  background: #d9c49b;
+}
+
 .match-rule {
   display: grid;
   min-width: 132px;
@@ -616,6 +626,12 @@ kbd.attack-key {
 
 .touch-two .axe-touch {
   background: rgba(53, 167, 160, 0.32);
+}
+
+.can-touch {
+  grid-column: span 2;
+  background: rgba(217, 196, 155, 0.24);
+  font-size: 13px;
 }
 
 .touch-controls.online-host,

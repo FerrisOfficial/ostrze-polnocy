@@ -7,6 +7,7 @@ const WORLD_H = 720;
 const GROUND_Y = 584;
 const ATTACK_TIME = 0.42;
 const JUMP_SPEED = 750;
+const CAN_COOLDOWN = 1.8;
 
 type Fighter = {
   id: 1 | 2;
@@ -19,6 +20,7 @@ type Fighter = {
   hp: number;
   attack: number;
   cooldown: number;
+  throwCooldown: number;
   hitDone: boolean;
   hurt: number;
   onGround: boolean;
@@ -39,11 +41,24 @@ type Particle = {
   color: string;
 };
 
+type CanProjectile = {
+  id: number;
+  owner: 1 | 2;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rotation: number;
+  spin: number;
+  life: number;
+};
+
 type RoundState = "playing" | "roundOver" | "matchOver";
 
 type Game = {
   fighters: [Fighter, Fighter];
   particles: Particle[];
+  cans: CanProjectile[];
   keys: Set<string>;
   state: RoundState;
   round: number;
@@ -69,6 +84,7 @@ type PlayerInput = {
   right: boolean;
   jump: boolean;
   attack: boolean;
+  throwCan: boolean;
 };
 
 type FighterSnapshot = Pick<
@@ -82,6 +98,7 @@ type FighterSnapshot = Pick<
   | "hp"
   | "attack"
   | "cooldown"
+  | "throwCooldown"
   | "hitDone"
   | "hurt"
   | "onGround"
@@ -91,6 +108,7 @@ type FighterSnapshot = Pick<
 
 type GameSnapshot = {
   fighters: [FighterSnapshot, FighterSnapshot];
+  cans: CanProjectile[];
   state: RoundState;
   round: number;
   winner: 1 | 2 | null;
@@ -123,6 +141,7 @@ const EMPTY_INPUT: PlayerInput = {
   right: false,
   jump: false,
   attack: false,
+  throwCan: false,
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -135,7 +154,8 @@ function isPlayerInput(value: unknown): value is PlayerInput {
     typeof value.left === "boolean" &&
     typeof value.right === "boolean" &&
     typeof value.jump === "boolean" &&
-    typeof value.attack === "boolean"
+    typeof value.attack === "boolean" &&
+    typeof value.throwCan === "boolean"
   );
 }
 
@@ -149,6 +169,7 @@ function isSnapshotFighter(value: unknown): value is FighterSnapshot {
     "hp",
     "attack",
     "cooldown",
+    "throwCooldown",
     "hurt",
     "coyote",
     "wins",
@@ -164,11 +185,30 @@ function isSnapshotFighter(value: unknown): value is FighterSnapshot {
   );
 }
 
+function isCanProjectile(value: unknown): value is CanProjectile {
+  if (!isObjectRecord(value)) return false;
+  return (
+    Number.isSafeInteger(value.id) &&
+    (value.owner === 1 || value.owner === 2) &&
+    ["x", "y", "vx", "vy", "rotation", "spin", "life"].every(
+      (field) => typeof value[field] === "number" && Number.isFinite(value[field]),
+    )
+  );
+}
+
 function isGameSnapshot(value: unknown): value is GameSnapshot {
-  if (!isObjectRecord(value) || !Array.isArray(value.fighters)) return false;
+  if (
+    !isObjectRecord(value) ||
+    !Array.isArray(value.fighters) ||
+    !Array.isArray(value.cans)
+  ) {
+    return false;
+  }
   return (
     value.fighters.length === 2 &&
     value.fighters.every(isSnapshotFighter) &&
+    value.cans.length <= 12 &&
+    value.cans.every(isCanProjectile) &&
     ["round", "roundEndTime", "introTime", "shake"].every(
       (field) =>
         typeof value[field] === "number" && Number.isFinite(value[field]),
@@ -205,6 +245,7 @@ function makeFighter(id: 1 | 2, wins = 0): Fighter {
     hp: 100,
     attack: 0,
     cooldown: 0,
+    throwCooldown: 0,
     hitDone: false,
     hurt: 0,
     onGround: true,
@@ -268,16 +309,18 @@ export default function Home() {
     }
 
     const normalized = key.toLowerCase();
-    const field =
-      normalized === "a" || normalized === "arrowleft"
+    const field: keyof PlayerInput | null =
+      normalized === "a" || normalized === "touchleft"
         ? "left"
-        : normalized === "d" || normalized === "arrowright"
+        : normalized === "d" || normalized === "touchright"
           ? "right"
-          : normalized === "w" || normalized === "arrowup"
+          : normalized === " " || normalized === "touchjump"
             ? "jump"
-            : normalized === "f" || normalized === "l"
+            : normalized === "mouseattack" || normalized === "touchattack"
               ? "attack"
-              : null;
+              : normalized === "mousecan" || normalized === "touchcan"
+                ? "throwCan"
+                : null;
     if (!field) return false;
     if (network.localInput[field] === pressed) return true;
 
@@ -304,6 +347,7 @@ export default function Home() {
     const game: Game = {
       fighters: [makeFighter(1), makeFighter(2)],
       particles: [],
+      cans: [],
       keys: new Set(),
       state: "playing",
       round: 1,
@@ -358,6 +402,7 @@ export default function Home() {
       const [one, two] = game.fighters;
       game.fighters = [makeFighter(1, one.wins), makeFighter(2, two.wins)];
       game.particles = [];
+      game.cans = [];
       game.state = "playing";
       game.winner = null;
       game.round += 1;
@@ -369,6 +414,7 @@ export default function Home() {
     const resetMatch = () => {
       game.fighters = [makeFighter(1), makeFighter(2)];
       game.particles = [];
+      game.cans = [];
       game.state = "playing";
       game.round = 1;
       game.winner = null;
@@ -397,7 +443,7 @@ export default function Home() {
       ) {
         event.preventDefault();
       }
-      if (event.repeat && ["w", "arrowup", "f", "l", "p"].includes(key)) {
+      if (event.repeat && ["w", "arrowup", "f", "l", " ", "p"].includes(key)) {
         return;
       }
       if (network.role === "guest" && network.ready) {
@@ -447,7 +493,7 @@ export default function Home() {
       game.keys.clear();
       const network = networkRef.current;
       if (network.role === "guest" && network.ready) {
-        for (const key of ["a", "d", "w", "f"]) {
+        for (const key of ["a", "d", " ", "mouseattack", "mousecan"]) {
           sendGuestInput(key, false);
         }
       }
@@ -473,6 +519,20 @@ export default function Home() {
       }
     };
 
+    const finishRound = (winner: Fighter) => {
+      if (game.state !== "playing") return;
+      winner.wins += 1;
+      game.winner = winner.id;
+      game.state = winner.wins >= 3 ? "matchOver" : "roundOver";
+      game.roundEndTime = 0;
+      setAnnouncement(
+        winner.wins >= 3
+          ? `${winner.name} wygrywa cały pojedynek.`
+          : `${winner.name} wygrywa rundę ${game.round}.`,
+      );
+      sound(64, 0.48, "sawtooth", 0.075);
+    };
+
     const tryAttack = (fighter: Fighter, attackKey: string) => {
       if (
         game.keys.has(attackKey) &&
@@ -488,6 +548,35 @@ export default function Home() {
       }
     };
 
+    let nextCanId = 1;
+    const tryThrowCan = (fighter: Fighter, throwKey?: string) => {
+      if (!throwKey || !game.keys.has(throwKey)) return;
+      game.keys.delete(throwKey);
+      if (
+        fighter.throwCooldown > 0 ||
+        fighter.hurt > 0 ||
+        game.introTime >= 0.8 ||
+        game.state !== "playing"
+      ) {
+        return;
+      }
+
+      fighter.throwCooldown = CAN_COOLDOWN;
+      game.cans.push({
+        id: nextCanId,
+        owner: fighter.id,
+        x: fighter.x + fighter.facing * 46,
+        y: fighter.y - 88,
+        vx: fighter.facing * 610 + fighter.vx * 0.22,
+        vy: -285,
+        rotation: 0,
+        spin: fighter.facing * 12,
+        life: 2.2,
+      });
+      nextCanId += 1;
+      sound(330, 0.11, "triangle", 0.025);
+    };
+
     const updateFighter = (
       fighter: Fighter,
       opponent: Fighter,
@@ -496,8 +585,10 @@ export default function Home() {
       rightKey: string,
       jumpKey: string,
       attackKey: string,
+      throwKey?: string,
     ) => {
       fighter.cooldown = Math.max(0, fighter.cooldown - dt);
+      fighter.throwCooldown = Math.max(0, fighter.throwCooldown - dt);
       fighter.hurt = Math.max(0, fighter.hurt - dt);
       fighter.attack = Math.max(0, fighter.attack - dt);
       fighter.coyote = fighter.onGround
@@ -532,6 +623,7 @@ export default function Home() {
       }
 
       tryAttack(fighter, attackKey);
+      tryThrowCan(fighter, throwKey);
 
       if (fighter.attack > 0 && !fighter.hitDone) {
         const phase = 1 - fighter.attack / ATTACK_TIME;
@@ -555,16 +647,7 @@ export default function Home() {
             sound(92, 0.16, "square", 0.07);
 
             if (opponent.hp <= 0) {
-              fighter.wins += 1;
-              game.winner = fighter.id;
-              game.state = fighter.wins >= 3 ? "matchOver" : "roundOver";
-              game.roundEndTime = 0;
-              setAnnouncement(
-                fighter.wins >= 3
-                  ? `${fighter.name} wygrywa cały pojedynek.`
-                  : `${fighter.name} wygrywa rundę ${game.round}.`,
-              );
-              sound(64, 0.48, "sawtooth", 0.075);
+              finishRound(fighter);
             }
           }
         }
@@ -596,19 +679,66 @@ export default function Home() {
       }
     };
 
+    const updateCans = (dt: number) => {
+      game.cans = game.cans.filter((can) => {
+        const previousY = can.y;
+        can.life -= dt;
+        can.vy += 920 * dt;
+        can.x += can.vx * dt;
+        can.y += can.vy * dt;
+        can.rotation += can.spin * dt;
+
+        const opponent = game.fighters[can.owner === 1 ? 1 : 0];
+        const hitOpponent =
+          game.state === "playing" &&
+          Math.hypot(can.x - opponent.x, can.y - (opponent.y - 72)) < 48;
+        if (hitOpponent) {
+          const thrower = game.fighters[can.owner === 1 ? 0 : 1];
+          opponent.hp = Math.max(0, opponent.hp - 11);
+          opponent.vx = Math.sign(can.vx) * (360 + (100 - opponent.hp) * 1.25);
+          opponent.vy = -185;
+          opponent.hurt = 0.22;
+          game.shake = 8;
+          spawnHitParticles(can.x, can.y, "#d8c2a0");
+          sound(128, 0.12, "square", 0.05);
+          if (opponent.hp <= 0) finishRound(thrower);
+          return false;
+        }
+
+        const hitPlatform =
+          can.vy >= 0 &&
+          platforms.some(
+            (platform) =>
+              previousY <= platform.y &&
+              can.y >= platform.y &&
+              can.x >= platform.x &&
+              can.x <= platform.x + platform.w,
+          );
+        return (
+          can.life > 0 &&
+          can.x > -60 &&
+          can.x < WORLD_W + 60 &&
+          can.y < GROUND_Y &&
+          !hitPlatform
+        );
+      });
+    };
+
     const applyRemoteInput = () => {
       const network = networkRef.current;
       const input = network.remoteInput;
       const previous = network.appliedRemoteInput;
 
-      if (input.left) game.keys.add("arrowleft");
-      else game.keys.delete("arrowleft");
-      if (input.right) game.keys.add("arrowright");
-      else game.keys.delete("arrowright");
-      if (input.jump && !previous.jump) game.keys.add("arrowup");
-      if (!input.jump) game.keys.delete("arrowup");
-      if (input.attack && !previous.attack) game.keys.add("l");
-      if (!input.attack) game.keys.delete("l");
+      if (input.left) game.keys.add("remoteleft");
+      else game.keys.delete("remoteleft");
+      if (input.right) game.keys.add("remoteright");
+      else game.keys.delete("remoteright");
+      if (input.jump && !previous.jump) game.keys.add("remotejump");
+      if (!input.jump) game.keys.delete("remotejump");
+      if (input.attack && !previous.attack) game.keys.add("remoteattack");
+      if (!input.attack) game.keys.delete("remoteattack");
+      if (input.throwCan && !previous.throwCan) game.keys.add("remotethrow");
+      if (!input.throwCan) game.keys.delete("remotethrow");
 
       network.appliedRemoteInput = { ...input };
     };
@@ -629,12 +759,26 @@ export default function Home() {
         fighter.hp = next.hp;
         fighter.attack = next.attack;
         fighter.cooldown = next.cooldown;
+        fighter.throwCooldown = next.throwCooldown;
         fighter.hitDone = next.hitDone;
         fighter.hurt = next.hurt;
         fighter.onGround = next.onGround;
         fighter.coyote = next.coyote;
         fighter.wins = next.wins;
       }
+
+      const currentCans = new Map(game.cans.map((can) => [can.id, can]));
+      game.cans = snapshot.cans.map((next) => {
+        const current = currentCans.get(next.id);
+        if (!current) return { ...next };
+        return {
+          ...next,
+          x: current.x + (next.x - current.x) * blend,
+          y: current.y + (next.y - current.y) * blend,
+          rotation:
+            current.rotation + (next.rotation - current.rotation) * blend,
+        };
+      });
 
       game.state = snapshot.state;
       game.round = snapshot.round;
@@ -659,12 +803,14 @@ export default function Home() {
         hp: fighter.hp,
         attack: fighter.attack,
         cooldown: fighter.cooldown,
+        throwCooldown: fighter.throwCooldown,
         hitDone: fighter.hitDone,
         hurt: fighter.hurt,
         onGround: fighter.onGround,
         coyote: fighter.coyote,
         wins: fighter.wins,
       })) as [FighterSnapshot, FighterSnapshot],
+      cans: game.cans.map((can) => ({ ...can })),
       state: game.state,
       round: game.round,
       winner: game.winner,
@@ -688,8 +834,22 @@ export default function Home() {
 
       if (game.state === "playing") {
         const [one, two] = game.fighters;
-        updateFighter(one, two, dt, "a", "d", "w", "f");
-        updateFighter(two, one, dt, "arrowleft", "arrowright", "arrowup", "l");
+        if (network.role === "host" && network.ready) {
+          updateFighter(one, two, dt, "a", "d", " ", "mouseattack", "mousecan");
+          updateFighter(
+            two,
+            one,
+            dt,
+            "remoteleft",
+            "remoteright",
+            "remotejump",
+            "remoteattack",
+            "remotethrow",
+          );
+        } else {
+          updateFighter(one, two, dt, "a", "d", "w", "f");
+          updateFighter(two, one, dt, "arrowleft", "arrowright", "arrowup", "l");
+        }
 
         const dx = two.x - one.x;
         const dy = Math.abs(two.y - one.y);
@@ -708,6 +868,8 @@ export default function Home() {
           fighter.vx *= Math.pow(0.04, dt);
         }
       }
+
+      updateCans(dt);
 
       game.particles = game.particles.filter((particle) => {
         particle.life -= dt;
@@ -967,6 +1129,37 @@ export default function Home() {
       ctx.restore();
     };
 
+    const drawCan = (can: CanProjectile) => {
+      ctx.save();
+      ctx.translate(can.x, can.y);
+      ctx.rotate(can.rotation);
+      ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+      ctx.beginPath();
+      ctx.ellipse(3, 16, 15, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = can.owner === 1 ? "#c8794d" : "#6493a1";
+      ctx.strokeStyle = "#292d2d";
+      ctx.lineWidth = 3;
+      ctx.fillRect(-10, -14, 20, 28);
+      ctx.strokeRect(-10, -14, 20, 28);
+      ctx.fillStyle = "#c7c4b6";
+      ctx.beginPath();
+      ctx.ellipse(0, -14, 10, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(0, 14, 10, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255, 238, 191, 0.58)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-4, -8);
+      ctx.lineTo(-4, 8);
+      ctx.stroke();
+      ctx.restore();
+    };
+
     const drawFighter = (fighter: Fighter, time: number) => {
       const moving = Math.abs(fighter.vx) > 35 && fighter.onGround;
       const stride = moving ? Math.sin(time * 0.018) * 13 : 0;
@@ -1167,6 +1360,30 @@ export default function Home() {
         ctx.arc(dotX + (left ? 8 : -8), 96, 8, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      if (networkRef.current.role && networkRef.current.ready) {
+        const cooldownWidth = 126;
+        const cooldownX = left ? x : x + w - cooldownWidth;
+        const readyRatio = 1 - Math.min(1, fighter.throwCooldown / CAN_COOLDOWN);
+        ctx.fillStyle = "rgba(12, 13, 15, 0.72)";
+        roundedRect(ctx, cooldownX, 111, cooldownWidth, 22, 5);
+        ctx.fill();
+        if (readyRatio > 0) {
+          ctx.fillStyle = fighter.accent;
+          roundedRect(ctx, cooldownX + 3, 114, (cooldownWidth - 6) * readyRatio, 16, 3);
+          ctx.fill();
+        }
+        ctx.textAlign = "center";
+        ctx.fillStyle = readyRatio >= 1 ? "#17191a" : "#fff3d1";
+        ctx.font = "900 10px Arial Black, Arial";
+        ctx.fillText(
+          readyRatio >= 1
+            ? "PUSZKA GOTOWA"
+            : `PUSZKA ${fighter.throwCooldown.toFixed(1)} s`,
+          cooldownX + cooldownWidth / 2,
+          126,
+        );
+      }
       ctx.restore();
     };
 
@@ -1240,6 +1457,9 @@ export default function Home() {
       for (const fighter of game.fighters) {
         drawFighter(fighter, time);
       }
+      for (const can of game.cans) {
+        drawCan(can);
+      }
       for (const particle of game.particles) {
         ctx.globalAlpha = Math.min(1, particle.life * 3);
         ctx.fillStyle = particle.color;
@@ -1281,18 +1501,52 @@ export default function Home() {
     };
     animationFrame = requestAnimationFrame(loop);
 
-    const handleCanvasPointer = () => {
+    const mouseControlKey = (button: number) =>
+      button === 0 ? "mouseattack" : button === 2 ? "mousecan" : null;
+
+    const handleCanvasPointerDown = (event: PointerEvent) => {
       ensureAudio();
-      continueGame();
+      const network = networkRef.current;
+      if (event.pointerType === "mouse" && network.role && network.ready) {
+        const key = mouseControlKey(event.button);
+        if (!key) return;
+        event.preventDefault();
+        if (network.role === "host" && game.state !== "playing") {
+          if (event.button === 0) continueGame();
+          return;
+        }
+        if (network.role === "guest") sendGuestInput(key, true);
+        else game.keys.add(key);
+        return;
+      }
+      if (event.button === 0) continueGame();
     };
-    canvas.addEventListener("pointerdown", handleCanvasPointer);
+
+    const handleCanvasPointerUp = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      const key = mouseControlKey(event.button);
+      if (!key) return;
+      const network = networkRef.current;
+      if (network.role === "guest" && network.ready) sendGuestInput(key, false);
+      else game.keys.delete(key);
+    };
+
+    const handleCanvasContextMenu = (event: MouseEvent) => {
+      const network = networkRef.current;
+      if (network.role && network.ready) event.preventDefault();
+    };
+    canvas.addEventListener("pointerdown", handleCanvasPointerDown);
+    window.addEventListener("pointerup", handleCanvasPointerUp);
+    canvas.addEventListener("contextmenu", handleCanvasContextMenu);
 
     return () => {
       cancelAnimationFrame(animationFrame);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
-      canvas.removeEventListener("pointerdown", handleCanvasPointer);
+      canvas.removeEventListener("pointerdown", handleCanvasPointerDown);
+      window.removeEventListener("pointerup", handleCanvasPointerUp);
+      canvas.removeEventListener("contextmenu", handleCanvasContextMenu);
       actionsRef.current = null;
     };
   }, [sendGuestInput]);
@@ -1476,18 +1730,31 @@ export default function Home() {
       }
       return;
     }
+    const network = networkRef.current;
+    const effectiveKey =
+      network.role === "host" && network.ready
+        ? key === "touchleft"
+          ? "a"
+          : key === "touchright"
+            ? "d"
+            : key === "touchjump"
+              ? " "
+              : key === "touchattack"
+                ? "mouseattack"
+                : key === "touchcan"
+                  ? "mousecan"
+                  : key
+        : key;
     if (
-      networkRef.current.role === "host" &&
-      networkRef.current.ready &&
-      ["arrowleft", "arrowright", "arrowup", "l"].includes(key)
-    ) {
-      return;
-    }
+      network.role === "host" &&
+      network.ready &&
+      ["arrowleft", "arrowright", "arrowup", "l"].includes(effectiveKey)
+    ) return;
     if (pressed) {
-      game.keys.add(key);
+      game.keys.add(effectiveKey);
       if (audioRef.current?.state === "suspended") void audioRef.current.resume();
     } else {
-      game.keys.delete(key);
+      game.keys.delete(effectiveKey);
     }
   };
 
@@ -1682,7 +1949,7 @@ export default function Home() {
           width={WORLD_W}
           height={WORLD_H}
           className="game-canvas"
-          aria-label="Gra BITWA POD MOSTEM. Mirek: A, D, W i F. Staszek: strzałki i L."
+          aria-label="Gra BITWA POD MOSTEM. Lokalnie: Mirek używa A, D, W i F, a Staszek strzałek i L. Online obaj używają A, D, spacji oraz przycisków myszy."
         />
         <div className="pause-badge" aria-hidden="true">
           <span>P</span> PAUZA
@@ -1695,9 +1962,20 @@ export default function Home() {
           <div>
             <p className="player-name">MIREK</p>
             <div className="keys-row">
-              <kbd>A</kbd><kbd>D</kbd><span>RUCH</span>
-              <kbd>W</kbd><span>SKOK</span>
-              <kbd className="attack-key">F</kbd><span>CIOS</span>
+              {networkStatus === "connected" ? (
+                <>
+                  <kbd>A</kbd><kbd>D</kbd><span>RUCH</span>
+                  <kbd className="wide-key">SPACJA</kbd><span>SKOK</span>
+                  <kbd className="attack-key">LPM</kbd><span>CIOS</span>
+                  <kbd className="can-key">PPM</kbd><span>PUSZKA</span>
+                </>
+              ) : (
+                <>
+                  <kbd>A</kbd><kbd>D</kbd><span>RUCH</span>
+                  <kbd>W</kbd><span>SKOK</span>
+                  <kbd className="attack-key">F</kbd><span>CIOS</span>
+                </>
+              )}
             </div>
           </div>
         </article>
@@ -1709,9 +1987,20 @@ export default function Home() {
           <div>
             <p className="player-name">STASZEK</p>
             <div className="keys-row">
-              <kbd>←</kbd><kbd>→</kbd><span>RUCH</span>
-              <kbd>↑</kbd><span>SKOK</span>
-              <kbd className="attack-key">L</kbd><span>CIOS</span>
+              {networkStatus === "connected" ? (
+                <>
+                  <kbd>A</kbd><kbd>D</kbd><span>RUCH</span>
+                  <kbd className="wide-key">SPACJA</kbd><span>SKOK</span>
+                  <kbd className="attack-key">LPM</kbd><span>CIOS</span>
+                  <kbd className="can-key">PPM</kbd><span>PUSZKA</span>
+                </>
+              ) : (
+                <>
+                  <kbd>←</kbd><kbd>→</kbd><span>RUCH</span>
+                  <kbd>↑</kbd><span>SKOK</span>
+                  <kbd className="attack-key">L</kbd><span>CIOS</span>
+                </>
+              )}
             </div>
           </div>
           <div className="player-number">02</div>
@@ -1723,20 +2012,26 @@ export default function Home() {
         aria-label="Sterowanie dotykowe"
       >
         <div className="touch-side touch-one">
-          {touchButton("a", "←")}
-          {touchButton("d", "→")}
-          {touchButton("w", "↑", "jump-touch")}
-          {touchButton("f", "SIEKIERA", "axe-touch")}
+          {touchButton(networkStatus === "connected" ? "touchleft" : "a", "←")}
+          {touchButton(networkStatus === "connected" ? "touchright" : "d", "→")}
+          {touchButton(networkStatus === "connected" ? "touchjump" : "w", "↑", "jump-touch")}
+          {touchButton(networkStatus === "connected" ? "touchattack" : "f", "SIEKIERA", "axe-touch")}
+          {networkStatus === "connected" ? touchButton("touchcan", "PUSZKA", "can-touch") : null}
         </div>
         <div className="touch-side touch-two">
-          {touchButton("arrowleft", "←")}
-          {touchButton("arrowright", "→")}
-          {touchButton("arrowup", "↑", "jump-touch")}
-          {touchButton("l", "SIEKIERA", "axe-touch")}
+          {touchButton(networkStatus === "connected" ? "touchleft" : "arrowleft", "←")}
+          {touchButton(networkStatus === "connected" ? "touchright" : "arrowright", "→")}
+          {touchButton(networkStatus === "connected" ? "touchjump" : "arrowup", "↑", "jump-touch")}
+          {touchButton(networkStatus === "connected" ? "touchattack" : "l", "SIEKIERA", "axe-touch")}
+          {networkStatus === "connected" ? touchButton("touchcan", "PUSZKA", "can-touch") : null}
         </div>
       </section>
 
-      <p className="tip">WSKAZÓWKA: atakuj w powietrzu i wykorzystuj podesty, by zaskoczyć przeciwnika.</p>
+      <p className="tip">
+        {networkStatus === "connected"
+          ? "ONLINE: A/D — ruch, spacja — skok, LPM — siekiera, PPM — puszka z cooldownem."
+          : "WSKAZÓWKA: atakuj w powietrzu i wykorzystuj podesty, by zaskoczyć przeciwnika."}
+      </p>
       <p className="sr-only" role="status" aria-live="polite">
         {paused ? "Gra zatrzymana." : announcement}
       </p>

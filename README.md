@@ -10,8 +10,10 @@ Wybierz **Gra online**. Jedna osoba tworzy pokój i wysyła kod złożony z sze�
 
 ## Sterowanie
 
-- Gracz 1 — `A` / `D`: ruch, `W`: skok, `F`: atak.
-- Gracz 2 — `←` / `→`: ruch, `↑`: skok, `L`: atak.
+- Online (obaj gracze) — `A` / `D`: ruch, `Spacja`: skok, lewy przycisk myszy: atak siekierą, prawy przycisk myszy: rzut puszką.
+- Rzut puszką ma 1,8 sekundy czasu odnowienia, widocznego pod paskiem zdrowia.
+- Lokalnie, gracz 1 — `A` / `D`: ruch, `W`: skok, `F`: atak.
+- Lokalnie, gracz 2 — `←` / `→`: ruch, `↑`: skok, `L`: atak.
 - `P`: pauza (lokalnie albo po stronie gospodarza).
 
 Na urządzeniach dotykowych gra wyświetla ekranowe przyciski sterowania.
